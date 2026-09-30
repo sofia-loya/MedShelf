@@ -27,6 +27,7 @@ install(DIRECTORY
   description
   config
   launch
+  meshes
   DESTINATION share/${PROJECT_NAME}
 )
 
