@@ -1,0 +1,104 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <world name="medshelf">
+
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
+          <material><ambient>0.8 0.8 0.8 1</ambient><diffuse>0.8 0.8 0.8 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Table: 2 x 2 m, top at z = 1.1, centered on origin -->
+    <model name="table">
+      <static>true</static>
+      <link name="link">
+        <visual name="visual">
+          <pose>-1.0 1.0 0 1.5708 0 0</pose>
+          <geometry>
+            <mesh>
+              <uri>package://my_arm_bringup/meshes/table.stl</uri>
+              <scale>0.001 0.001 0.001</scale>
+            </mesh>
+          </geometry>
+          <material><ambient>0.55 0.4 0.3 1</ambient><diffuse>0.55 0.4 0.3 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <pose>0 0 0.55 0 0 0</pose>
+          <geometry><box><size>2.0 2.0 1.1</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+
+    <!-- Shelf: on the floor past the table's -y edge, open front facing the robot -->
+    <model name="shelf">
+      <static>true</static>
+      <pose>0.425 -1.475 0 1.5708 0 3.1416</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry>
+            <mesh>
+              <uri>package://my_arm_bringup/meshes/shelf.stl</uri>
+              <scale>0.001 0.001 0.001</scale>
+            </mesh>
+          </geometry>
+          <material><ambient>0.9 0.9 0.9 1</ambient><diffuse>0.9 0.9 0.9 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <mesh>
+              <uri>package://my_arm_bringup/meshes/shelf.stl</uri>
+              <scale>0.001 0.001 0.001</scale>
+            </mesh>
+          </geometry>
+        </collision>
+      </link>
+    </model>
+
+    <!-- Tray: on the tabletop, beside the robot -->
+    <model name="tray">
+      <static>true</static>
+      <pose>0.3625 -0.475 1.1 1.5708 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry>
+            <mesh>
+              <uri>package://my_arm_bringup/meshes/tray.stl</uri>
+              <scale>0.001 0.001 0.001</scale>
+            </mesh>
+          </geometry>
+          <material><ambient>0.2 0.4 0.8 1</ambient><diffuse>0.2 0.4 0.8 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <mesh>
+              <uri>package://my_arm_bringup/meshes/tray.stl</uri>
+              <scale>0.001 0.001 0.001</scale>
+            </mesh>
+          </geometry>
+        </collision>
+      </link>
+    </model>
+
+  </world>
+</sdf>

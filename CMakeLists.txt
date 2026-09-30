@@ -28,6 +28,7 @@ install(DIRECTORY
   config
   launch
   meshes
+  worlds
   DESTINATION share/${PROJECT_NAME}
 )
 
