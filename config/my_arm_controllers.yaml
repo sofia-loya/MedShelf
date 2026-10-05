@@ -1,0 +1,36 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 100  # Hz
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    gripper_controller:
+      type: parallel_gripper_action_controller/GripperActionController
+
+arm_controller:
+  ros__parameters:
+    joints:
+      - shoulder_pan_joint
+      - shoulder_lift_joint
+      - elbow_joint
+      - wrist_1_joint
+      - wrist_2_joint
+      - wrist_3_joint
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+
+# Only the left knuckle is actuated; the other finger joints follow it via <mimic> tags
+gripper_controller:
+  ros__parameters:
+    joint: robotiq_85_left_knuckle_joint
+    state_interfaces: ["position", "velocity"]
+    allow_stalling: true
+    stall_timeout: 0.05
+    goal_tolerance: 0.02
