@@ -34,7 +34,7 @@
       <static>true</static>
       <link name="link">
         <visual name="visual">
-          <pose>-1.0 1.0 0 1.5708 0 0</pose>
+          <pose>-1.0 -1.0 1.1 -1.5708 0 0</pose>
           <geometry>
             <mesh>
               <uri>package://my_arm_bringup/meshes/table.stl</uri>
@@ -53,7 +53,7 @@
     <!-- Shelf: on the floor past the table's -y edge, open front facing the robot -->
     <model name="shelf">
       <static>true</static>
-      <pose>0.425 -1.475 0 1.5708 0 3.1416</pose>
+      <pose>-0.425 -1.05 0 1.5708 0 0</pose>
       <link name="link">
         <visual name="visual">
           <geometry>
@@ -75,27 +75,30 @@
       </link>
     </model>
 
-    <!-- Tray: on the tabletop, beside the robot -->
-    <model name="tray">
-      <static>true</static>
-      <pose>0.3625 -0.475 1.1 1.5708 0 0</pose>
+    <!-- Bin on the shelf: dynamic, so the gripper can move it -->
+    <model name="bin_red">
+      <pose>0 -1.19 1.035 0 0 0</pose>
       <link name="link">
+        <inertial>
+          <mass>0.5</mass>
+          <inertia>
+            <ixx>0.00388</ixx><iyy>0.00255</iyy><izz>0.00388</izz>
+            <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+          </inertia>
+        </inertial>
         <visual name="visual">
+          <pose>-0.0875 0.125 0 1.5708 0 0</pose>
           <geometry>
             <mesh>
               <uri>package://my_arm_bringup/meshes/tray.stl</uri>
               <scale>0.001 0.001 0.001</scale>
             </mesh>
           </geometry>
-          <material><ambient>0.2 0.4 0.8 1</ambient><diffuse>0.2 0.4 0.8 1</diffuse></material>
+          <material><ambient>0.8 0.1 0.1 1</ambient><diffuse>0.8 0.1 0.1 1</diffuse></material>
         </visual>
         <collision name="collision">
-          <geometry>
-            <mesh>
-              <uri>package://my_arm_bringup/meshes/tray.stl</uri>
-              <scale>0.001 0.001 0.001</scale>
-            </mesh>
-          </geometry>
+          <pose>0 0 0.0875 0 0 0</pose>
+          <geometry><box><size>0.175 0.25 0.175</size></box></geometry>
         </collision>
       </link>
     </model>
