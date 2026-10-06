@@ -7,6 +7,12 @@ Runs N trials end to end and writes one CSV row per trial:
   3. Wait for a confirmed detection and compare it to the ground-truth slot.
   4. (optional) Publish /medshelf/pick_target and wait for /medshelf/manipulation_status,
      logging joint tracking error from arm_controller while the arm moves.
+  5. (optional) Ground-truth check in Gazebo: which tray actually ended up at the drop spot?
+
+Modes:
+  use_perception:=true   full pipeline (camera picks the cubby)
+  use_perception:=false  manipulation-only: targets cycle through all 9 cubbies using the true
+                         slot, so every cubby gets tested equally and perception errors are excluded
 
 Uses only existing topics and does not modify any repo files. Needs running:
   gazebo.launch.py, camera.launch.py, and bin_detector.
@@ -16,6 +22,7 @@ Run:  python3 trial_runner.py --ros-args -p num_trials:=50 -p output_csv:=trials
 import csv
 import math
 import random
+import re
 import subprocess
 import threading
 import time
@@ -43,7 +50,9 @@ CATEGORIES = list(SUPPLY_TO_COLOR)  # gauze, gloves, ...
 CSV_FIELDS = [
     "trial", "seed", "requested", "expected_color", "gt_slot",
     "detected", "det_slot", "slot_correct", "found_category", "latency_s",
-    "manip_status", "manip_time_s", "joint_rms_err", "joint_max_err", "layout",
+    "manip_status", "manip_time_s", "joint_rms_err", "joint_max_err",
+    "picked_bin", "grasp_err_cm", "delivered_bin", "delivered_correct", "end_to_end",
+    "manip_detail", "layout",
 ]
 
 
@@ -58,7 +67,10 @@ class TrialRunner(Node):
         self.declare_parameter("settle_s", 1.5)
         self.declare_parameter("detect_timeout_s", 8.0)
         self.declare_parameter("run_manipulation", False)
-        self.declare_parameter("manip_timeout_s", 30.0)
+        self.declare_parameter("manip_timeout_s", 120.0)
+        self.declare_parameter("use_perception", True)
+        self.declare_parameter("place_xyz", [0.30, -0.20, 1.05])  # must match medshelf_manipulation
+        self.declare_parameter("delivery_radius", 0.12)
 
         self.lock = threading.Lock()
         self.visible = False
@@ -69,6 +81,7 @@ class TrialRunner(Node):
         self.manip_status = None
         self.joint_errors = []          # per-sample list of abs position errors
         self.recording_joints = False
+        self.manip_detail = ""
 
         self.create_subscription(Bool, "/medshelf/target_visible", self.on_visible, 10)
         self.create_subscription(String, "/medshelf/detected_color", self.on_color, 10)
@@ -76,6 +89,7 @@ class TrialRunner(Node):
         self.create_subscription(String, "/medshelf/manipulation_status", self.on_manip, 10)
         self.create_subscription(JointTrajectoryControllerState, "/arm_controller/controller_state",
                                  self.on_ctrl_state, 10)
+        self.create_subscription(String, "/medshelf/manipulation_detail", self.on_detail, 10)
         self.pick_pub = self.create_publisher(PoseStamped, "/medshelf/pick_target", 10)
 
         detector = self.get_parameter("detector_node").value
@@ -101,6 +115,10 @@ class TrialRunner(Node):
             if msg.data in ("SUCCEEDED", "FAILED"):
                 self.manip_status = msg.data
 
+    def on_detail(self, msg):
+        with self.lock:
+            self.manip_detail = msg.data
+
     def on_ctrl_state(self, msg):
         if not self.recording_joints:
             return
@@ -115,13 +133,49 @@ class TrialRunner(Node):
         # yaw = pi so the open side faces the table (quaternion z=1, w=0)
         req = (f'name: "{model}" position: {{x: {x} y: {y} z: {z}}} '
                f'orientation: {{x: 0 y: 0 z: 1 w: 0}}')
-        res = subprocess.run(
-            ["gz", "service", "-s", f"/world/{world}/set_pose",
-             "--reqtype", "gz.msgs.Pose", "--reptype", "gz.msgs.Boolean",
-             "--timeout", "3000", "--req", req],
-            capture_output=True, text=True)
+        for _attempt in range(3):  # Gazebo can be slow under load; retry before giving up
+            res = subprocess.run(
+                ["gz", "service", "-s", f"/world/{world}/set_pose",
+                 "--reqtype", "gz.msgs.Pose", "--reptype", "gz.msgs.Boolean",
+                 "--timeout", "10000", "--req", req],
+                capture_output=True, text=True)
+            if "true" in res.stdout:
+                return
         if "true" not in res.stdout:
             self.get_logger().warn(f"set_pose failed for {model}: {res.stdout.strip()} {res.stderr.strip()}")
+
+    def gz_tray_poses(self):
+        world = self.get_parameter("world_name").value
+        try:
+            out = subprocess.run(["gz", "topic", "-e", "-n", "1", "-t", f"/world/{world}/pose/info"],
+                                 capture_output=True, text=True, timeout=10).stdout
+        except subprocess.TimeoutExpired:
+            return {}
+        poses = {}
+        for chunk in re.split(r"\npose \{", out):
+            m = re.search(r'name: "tray_([a-z_]+)"', chunk)
+            pos = re.search(r"position \{([^}]*)\}", chunk)
+            if not m or m.group(1) in poses:
+                continue
+            xyz = [0.0, 0.0, 0.0]
+            if pos:
+                for i, axis in enumerate("xyz"):
+                    v = re.search(rf"\b{axis}: ([-\d.e+]+)", pos.group(1))
+                    if v:
+                        xyz[i] = float(v.group(1))
+            poses[m.group(1)] = tuple(xyz)
+        return poses
+
+    def delivered_tray(self):
+        """Which tray (if any) is sitting at the drop spot on the table."""
+        px, py, ptop = self.get_parameter("place_xyz").value
+        radius = float(self.get_parameter("delivery_radius").value)
+        best, best_d = "none", radius
+        for b, (x, y, z) in self.gz_tray_poses().items():
+            d = math.hypot(x - px, y - py)
+            if d < best_d and abs(z - ptop) < 0.15:
+                best, best_d = b, d
+        return best
 
     def apply_layout(self, layout):
         # Park every tray off the shelf first so no two trays ever overlap mid-shuffle.
@@ -147,12 +201,18 @@ class TrialRunner(Node):
         cats = CATEGORIES[:]
         rng.shuffle(cats)
         layout = dict(zip(SLOT_NAMES, cats))           # slot -> category
-        requested = rng.choice(CATEGORIES)
-        gt_slot = next(s for s, c in layout.items() if c == requested)
+        use_perception = bool(self.get_parameter("use_perception").value)
+        if use_perception:
+            requested = rng.choice(CATEGORIES)
+            gt_slot = next(s for s, c in layout.items() if c == requested)
+        else:
+            gt_slot = SLOT_NAMES[trial % len(SLOT_NAMES)]   # sweep every cubby evenly
+            requested = layout[gt_slot]
         expected_color = SUPPLY_TO_COLOR[requested]
 
         self.apply_layout(layout)
-        self.set_requested_bin(requested)
+        if use_perception:
+            self.set_requested_bin(requested)
         time.sleep(float(self.get_parameter("settle_s").value))
 
         with self.lock:
@@ -161,7 +221,10 @@ class TrialRunner(Node):
             self.manip_status = None
             self.collecting = True
         t_start = time.monotonic()
-        timeout = float(self.get_parameter("detect_timeout_s").value)
+        timeout = float(self.get_parameter("detect_timeout_s").value) if use_perception else 0.0
+        if not use_perception:
+            with self.lock:
+                self.detection = (gt_slot, expected_color, t_start)
         while time.monotonic() - t_start < timeout:
             with self.lock:
                 if self.detection is not None:
@@ -181,15 +244,27 @@ class TrialRunner(Node):
             "latency_s": round(det[2] - t_start, 3) if det else "",
             "manip_status": "not_run", "manip_time_s": "",
             "joint_rms_err": "", "joint_max_err": "",
+            "picked_bin": "", "grasp_err_cm": "", "delivered_bin": "",
+            "delivered_correct": "", "end_to_end": "", "manip_detail": "",
             "layout": ";".join(f"{s}:{c}" for s, c in layout.items()),
         }
 
         if det and self.get_parameter("run_manipulation").value:
             row.update(self.run_manipulation(det[0]))
+            time.sleep(1.0)  # let the released tray settle on the table
+            delivered = self.delivered_tray()
+            row["delivered_bin"] = delivered
+            row["delivered_correct"] = delivered == requested
+            row["end_to_end"] = bool(row["slot_correct"] and delivered == requested)
+            m = re.search(r"bin=([a-z_]+)", row["manip_detail"])
+            row["picked_bin"] = m.group(1) if m else ""
+            m = re.search(r"grasp_err_cm=([\d.]+)", row["manip_detail"])
+            row["grasp_err_cm"] = m.group(1) if m else ""
 
         self.get_logger().info(
             f"[trial {trial}] want {requested} ({expected_color}) at {gt_slot} -> "
-            f"detected {row['det_slot']} {'OK' if row['slot_correct'] else 'WRONG'} | manip {row['manip_status']}")
+            f"detected {row['det_slot']} {'OK' if row['slot_correct'] else 'WRONG'} | manip {row['manip_status']}"
+            f" | delivered {row['delivered_bin'] or '-'} | {row['manip_detail']}")
         return row
 
     def run_manipulation(self, det_slot):
@@ -203,6 +278,7 @@ class TrialRunner(Node):
         with self.lock:
             self.joint_errors = []
             self.manip_status = None
+            self.manip_detail = ""
         self.recording_joints = True
         t0 = time.monotonic()
         self.pick_pub.publish(target)
@@ -214,9 +290,11 @@ class TrialRunner(Node):
             time.sleep(0.05)
         self.recording_joints = False
 
+        time.sleep(0.3)  # detail is published just before the final status
         with self.lock:
             status = self.manip_status or "TIMEOUT"
             errs = self.joint_errors[:]
+            detail = self.manip_detail
         flat = [e for sample in errs for e in sample]
         rms = math.sqrt(sum(e * e for e in flat) / len(flat)) if flat else ""
         mx = max(flat) if flat else ""
@@ -225,6 +303,7 @@ class TrialRunner(Node):
             "manip_time_s": round(time.monotonic() - t0, 2),
             "joint_rms_err": round(rms, 5) if flat else "",
             "joint_max_err": round(mx, 5) if flat else "",
+            "manip_detail": detail,
         }
 
 

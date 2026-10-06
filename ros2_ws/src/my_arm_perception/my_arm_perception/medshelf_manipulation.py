@@ -34,7 +34,8 @@ from pathlib import Path
 
 import rclpy
 from ament_index_python.packages import get_package_share_directory
-from control_msgs.action import ParallelGripperCommand
+from builtin_interfaces.msg import Duration
+from control_msgs.action import FollowJointTrajectory, ParallelGripperCommand
 from geometry_msgs.msg import Point, Pose, PoseStamped
 from moveit.planning import MoveItPy, PlanRequestParameters
 from moveit_msgs.msg import AttachedCollisionObject, CollisionObject
@@ -44,11 +45,17 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from shape_msgs.msg import Mesh, MeshTriangle, SolidPrimitive
 from std_msgs.msg import Empty, String
+from tf2_ros import Buffer, TransformListener
+from trajectory_msgs.msg import JointTrajectoryPoint
 
 ARM_GROUP = "ur_manipulator"
 TOOL_LINK = "tool0"
 GRIPPER_JOINT = "robotiq_85_left_knuckle_joint"
 GRIPPER_OPEN, GRIPPER_CLOSED = 0.0, 0.7929
+ARM_JOINTS = ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
+              "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"]
+HOME = [0.0, -1.5708, 1.5708, -1.5708, -1.5708, 0.0]
+FINGER_TIPS = ("robotiq_85_left_finger_tip_link", "robotiq_85_right_finger_tip_link")
 
 # Cubby tray centers in Gazebo world coords (must match trial_runner.SLOT_XYZ + 0.0875)
 SLOT_CENTERS = {
@@ -129,6 +136,9 @@ class MedShelfManipulation(Node):
         p("attach_tolerance", 0.03)         # max gripper-to-handle distance (m) for the magnet to grab
         p("world_name", "medshelf")
         p("pregrasp_gripper", 0.40)         # partly open (~40 mm) so the lower finger fits the 20 mm handle slot
+        p("grasp_z_offset", 0.0)            # shift the grasp up(+)/down(-) if the fingers sit too high/low
+        p("require_finger_contact", False)  # True = also fail if the fingers close all the way (no pinch)
+        p("gripper_timeout", 25.0)          # s; Gazebo can run slower than real time
 
         g = lambda n: self.get_parameter(n).value  # noqa: E731
         self.base = (g("base_x"), g("base_y"), g("base_z"))
@@ -140,6 +150,12 @@ class MedShelfManipulation(Node):
         self.create_subscription(PoseStamped, "/medshelf/pick_target", self.on_target, 10)
         self.create_subscription(JointState, "/joint_states", self.on_joints, 10)
         self.gripper = ActionClient(self, ParallelGripperCommand, "/gripper_controller/gripper_cmd")
+        self.arm_direct = ActionClient(self, FollowJointTrajectory, "/arm_controller/follow_joint_trajectory")
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.arm_pos = {}
+        self.pregrasp_joints = None
+        self.last_closure = float("nan")
 
         self.gripper_pos = None
         self.jobs = queue.Queue()
@@ -289,7 +305,9 @@ class MedShelfManipulation(Node):
         b = min(handles, key=lambda k: math.dist(handles[k], handle_gz))
         err = math.dist(handles[b], handle_gz)
         if err > self.get_parameter("attach_tolerance").value:
-            raise RuntimeError(f"no handle between fingers (nearest {b}, {100 * err:.1f} cm off)")
+            d = [100 * (p - h) for p, h in zip(handle_gz, handles[b])]
+            raise RuntimeError(f"no handle between fingers (nearest {b}, {100 * err:.1f} cm off; "
+                               f"fingers minus handle dx={d[0]:+.1f} dy={d[1]:+.1f} dz={d[2]:+.1f} cm)")
         self.attach_state.pop(b, None)
         self.attach_pubs[b].publish(Empty())
         t0 = time.monotonic()
@@ -304,6 +322,50 @@ class MedShelfManipulation(Node):
                 self.detach_pubs[self.held_bin].publish(Empty())
                 time.sleep(0.05)
             self.held_bin = None
+
+    def finger_pads_gz(self):
+        """Midpoint of the two finger-tip links, measured from TF, in Gazebo world coords."""
+        pts = []
+        for link in FINGER_TIPS:
+            t = self.tf_buffer.lookup_transform("world", link, rclpy.time.Time(),
+                                                timeout=rclpy.duration.Duration(seconds=1.0))
+            v = t.transform.translation
+            pts.append((v.x + self.base[0], v.y + self.base[1], v.z + self.base[2]))
+        return tuple((a + b) / 2 for a, b in zip(*pts))
+
+    def current_arm_joints(self):
+        if not all(j in self.arm_pos for j in ARM_JOINTS):
+            return None
+        return [self.arm_pos[j] for j in ARM_JOINTS]
+
+    def move_joints_direct(self, waypoints, seconds_each=4.0):
+        """Send joint waypoints straight to arm_controller (no MoveIt). Used only for recovery."""
+        if not self.arm_direct.wait_for_server(timeout_sec=5.0):
+            raise RuntimeError("arm_controller action server not available")
+        goal = FollowJointTrajectory.Goal()
+        goal.trajectory.joint_names = ARM_JOINTS
+        for i, q in enumerate(waypoints, start=1):
+            pt = JointTrajectoryPoint()
+            pt.positions = [float(v) for v in q]
+            t = seconds_each * i
+            pt.time_from_start = Duration(sec=int(t), nanosec=int((t % 1) * 1e9))
+            goal.trajectory.points.append(pt)
+        fut = self.arm_direct.send_goal_async(goal)
+        self.wait(fut, 5.0, "direct move (send)")
+        handle = fut.result()
+        if not handle.accepted:
+            raise RuntimeError("direct move rejected")
+        self.wait(handle.get_result_async(), seconds_each * len(waypoints) * 3 + 10, "direct move")
+
+    def ensure_home(self):
+        q = self.current_arm_joints()
+        if q is not None and max(abs(a - b) for a, b in zip(q, HOME)) < 0.05:
+            return
+        try:
+            self.move("home", label="go home")
+        except Exception as e:  # noqa: BLE001
+            self.get_logger().warn(f"MoveIt home failed ({e}); moving home directly")
+            self.move_joints_direct([HOME], seconds_each=6.0)
 
     def gripper_links(self):
         links = []
@@ -359,7 +421,7 @@ class MedShelfManipulation(Node):
         handle = fut.result()
         if not handle.accepted:
             raise RuntimeError(f"gripper goal rejected: {label}")
-        self.wait(handle.get_result_async(), 10.0, label)
+        self.wait(handle.get_result_async(), float(self.get_parameter("gripper_timeout").value), label)
         time.sleep(0.3)
 
     @staticmethod
@@ -374,7 +436,7 @@ class MedShelfManipulation(Node):
     def pick(self, target):
         gz = (target.pose.position.x, target.pose.position.y, target.pose.position.z)
         slot = min(SLOT_CENTERS, key=lambda s: sum((a - b) ** 2 for a, b in zip(SLOT_CENTERS[s], gz)))
-        handle = (gz[0], gz[1] + HANDLE_FWD, gz[2] + HANDLE_UP)
+        handle = (gz[0], gz[1] + HANDLE_FWD, gz[2] + HANDLE_UP + self.get_parameter("grasp_z_offset").value)
         pre = (handle[0], handle[1] + self.get_parameter("pregrasp_dist").value, handle[2])
         lifted = (handle[0], handle[1], handle[2] + 0.01)
         out = (handle[0], handle[1] + self.get_parameter("retreat_dist").value, handle[2] + 0.01)
@@ -383,18 +445,27 @@ class MedShelfManipulation(Node):
         above_place = (place[0], place[1], place[2] + 0.08)
 
         self.get_logger().info(f"Picking tray in {slot}")
+        self.pregrasp_joints = None
         self.reset_scene()
+        self.ensure_home()
         self.set_gripper(self.get_parameter("pregrasp_gripper").value, "pre-open")
         self.move(self.tool_pose(pre), label="pre-grasp")
+        time.sleep(0.3)
+        self.pregrasp_joints = self.current_arm_joints()
         self.co_pub.publish(self.tray_object(slot, CollisionObject.REMOVE))
         time.sleep(0.3)
         self.move(self.tool_pose(handle), straight=True, label="approach")
-        self.set_gripper(GRIPPER_CLOSED, "close")
-        if self.gripper_pos is not None and self.gripper_pos > self.get_parameter("missed_grasp_threshold").value:
-            self.set_gripper(GRIPPER_OPEN, "open after miss")
-            self.move(self.tool_pose(pre), straight=True, label="back off after miss")
+        try:
+            self.set_gripper(GRIPPER_CLOSED, "close")
+        except RuntimeError as e:  # a slow/stalled gripper is not fatal; we check positions next
+            self.get_logger().warn(str(e))
+        pads = self.finger_pads_gz()   # where the fingers REALLY are (TF), not where we asked
+        closed_fully = self.gripper_pos is not None and \
+            self.gripper_pos > self.get_parameter("missed_grasp_threshold").value
+        if closed_fully and self.get_parameter("require_finger_contact").value:
             raise RuntimeError(f"missed grasp (gripper closed to {self.gripper_pos:.3f})")
-        bin_name, grasp_err = self.magnet_attach(handle)
+        bin_name, grasp_err = self.magnet_attach(pads)
+        self.last_closure = self.gripper_pos
         self.attach_tray(slot)
         self.move(self.tool_pose(lifted), straight=True, label="lift")
         self.move(self.tool_pose(out), straight=True, label="retreat")
@@ -407,13 +478,34 @@ class MedShelfManipulation(Node):
         self.move("home", label="home")
         return bin_name, grasp_err
 
+    def recover(self):
+        """Get the arm back home from wherever it stopped, even if MoveIt thinks it is in collision."""
+        self.magnet_release()
+        try:
+            self.set_gripper(GRIPPER_OPEN, "recover open")
+        except Exception as e:  # noqa: BLE001
+            self.get_logger().warn(f"recover open: {e}")
+        self.detach_tray()
+        self.reset_scene()
+        try:
+            self.move("home", label="recover home")
+            return
+        except Exception as e:  # noqa: BLE001
+            self.get_logger().warn(f"MoveIt recovery failed ({e}); backing out directly")
+        # Straight back to where we were in front of the cubby, then home (no collision checking)
+        waypoints = ([self.pregrasp_joints] if self.pregrasp_joints else []) + [HOME]
+        self.move_joints_direct(waypoints, seconds_each=4.0)
+
     # ---------------- plumbing ----------------
     def on_target(self, msg):
         self.jobs.put(msg)
 
     def on_joints(self, msg):
-        if GRIPPER_JOINT in msg.name:
-            self.gripper_pos = msg.position[msg.name.index(GRIPPER_JOINT)]
+        for name, pos in zip(msg.name, msg.position):
+            if name == GRIPPER_JOINT:
+                self.gripper_pos = pos
+            elif name in ARM_JOINTS:
+                self.arm_pos[name] = pos
 
     def worker(self):
         while rclpy.ok():
@@ -422,17 +514,15 @@ class MedShelfManipulation(Node):
             t0 = time.monotonic()
             try:
                 bin_name, err = self.pick(target)
-                self.detail(f"ok in {time.monotonic() - t0:.1f}s | bin={bin_name} | grasp_err_cm={100 * err:.2f}")
+                self.detail(f"ok in {time.monotonic() - t0:.1f}s | bin={bin_name} | grasp_err_cm={100 * err:.2f}"
+                            f" | gripper_closed_to={self.last_closure:.3f}")
                 self.publish_status("SUCCEEDED")
             except Exception as e:  # noqa: BLE001
                 self.get_logger().error(str(e))
                 self.detail(str(e))
                 self.publish_status("FAILED")
                 try:
-                    self.magnet_release()
-                    self.set_gripper(GRIPPER_OPEN, "recover open")
-                    self.detach_tray()
-                    self.move("home", label="recover home")
+                    self.recover()
                 except Exception as e2:  # noqa: BLE001
                     self.get_logger().error(f"recovery failed: {e2}")
 

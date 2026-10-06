@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Summarize a trial_runner CSV.  Usage: python3 analyze_trials.py trials.csv [--plot]"""
 import csv
+import re
 import statistics as st
 import sys
 from collections import Counter, defaultdict
@@ -60,20 +61,50 @@ def main():
     for (a, b), c in conf.most_common():
         print(f"  {a:14s} -> {b:14s} x{c}")
 
-    man = [r for r in rows if r["manip_status"] not in ("", "not_run")]
+    man = [r for r in rows if r.get("manip_status", "") not in ("", "not_run")]
     if man:
         succ = [r for r in man if r["manip_status"] == "SUCCEEDED"]
         print("\n--- Manipulation ---")
-        print(f"Success rate          {pct(len(succ), len(man))}")
-        print(f"End-to-end success    {pct(sum(1 for r in succ if r['slot_correct'] == 'True'), n)}")
-        times = [float(r["manip_time_s"]) for r in man if r["manip_time_s"]]
+        print(f"Node reported success {pct(len(succ), len(man))}")
+        if "delivered_correct" in man[0]:
+            dc = [r for r in man if r["delivered_correct"] == "True"]
+            e2e = [r for r in man if r["end_to_end"] == "True"]
+            print(f"Right tray delivered  {pct(len(dc), len(man))}   (Gazebo ground truth)")
+            print(f"End-to-end success    {pct(len(e2e), n)}   (right cubby AND right tray delivered)")
+            wrong = [r for r in man if r["delivered_bin"] not in ("", "none", r["requested"])]
+            print(f"Wrong tray delivered  {pct(len(wrong), len(man))}")
+        times = [float(r["manip_time_s"]) for r in succ if r["manip_time_s"]]
         if times:
-            print(f"Manip time (s)        mean {st.mean(times):.2f}")
+            print(f"Pick time (s)         mean {st.mean(times):.1f}  min {min(times):.1f}  max {max(times):.1f}")
+        ge = [float(r["grasp_err_cm"]) for r in man if r.get("grasp_err_cm")]
+        if ge:
+            print(f"Grasp error (cm)      mean {st.mean(ge):.2f}  max {max(ge):.2f}   (gripper vs real handle)")
         rms = [float(r["joint_rms_err"]) for r in man if r["joint_rms_err"]]
         mx = [float(r["joint_max_err"]) for r in man if r["joint_max_err"]]
         if rms:
             print(f"Joint RMS err (rad)   mean {st.mean(rms):.4f}   worst max {max(mx):.4f}")
-        print("Outcomes:", dict(Counter(r["manip_status"] for r in man)))
+
+        print("\n  Manipulation success per cubby (3x3):")
+        by_m = defaultdict(list)
+        for r in man:
+            ok_ = r.get("delivered_correct", r["manip_status"] == "SUCCEEDED")
+            by_m[r["det_slot"]].append(ok_ in (True, "True"))
+        for row in range(3):
+            cells = []
+            for col in range(3):
+                v = by_m[SLOTS[row * 3 + col]]
+                cells.append(f"{100 * sum(v) / len(v):5.0f}% n={len(v):<3d}" if v else "   -       ")
+            print("  " + " | ".join(cells))
+
+        fails = Counter()
+        for r in man:
+            if r["manip_status"] != "SUCCEEDED":
+                d = r.get("manip_detail", "") or r["manip_status"]
+                fails[re.sub(r"\(.*?\)|[\d.]+ ?cm", "", d).strip()[:70]] += 1
+        if fails:
+            print("\n  Failure reasons:")
+            for reason, c in fails.most_common():
+                print(f"    x{c:<3d} {reason}")
 
     if "--plot" in sys.argv:
         import matplotlib.pyplot as plt
