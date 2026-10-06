@@ -1,0 +1,40 @@
+# Settings for MoveItPy (the Python API used by medshelf_manipulation)
+planning_scene_monitor_options:
+  name: "planning_scene_monitor"
+  robot_description: "robot_description"
+  joint_state_topic: "/joint_states"
+  attached_collision_object_topic: "/attached_collision_object"
+  publish_planning_scene_topic: "/moveit_py/publish_planning_scene"
+  monitored_planning_scene_topic: "/moveit_py/monitored_planning_scene"
+  wait_for_initial_state_timeout: 10.0
+
+planning_pipelines:
+  pipeline_names: ["ompl", "pilz_industrial_motion_planner"]
+
+plan_request_params:
+  planning_attempts: 1
+  planning_pipeline: ompl
+  planner_id: "RRTConnectkConfigDefault"
+  planning_time: 5.0
+  max_velocity_scaling_factor: 0.3
+  max_acceleration_scaling_factor: 0.3
+
+# Free-space moves (around the shelf/table)
+ompl_rrtc:
+  plan_request_params:
+    planning_attempts: 3
+    planning_pipeline: ompl
+    planner_id: "RRTConnectkConfigDefault"
+    planning_time: 5.0
+    max_velocity_scaling_factor: 0.3
+    max_acceleration_scaling_factor: 0.3
+
+# Straight-line moves (into / out of the cubby)
+pilz_lin:
+  plan_request_params:
+    planning_attempts: 1
+    planning_pipeline: pilz_industrial_motion_planner
+    planner_id: "LIN"
+    planning_time: 5.0
+    max_velocity_scaling_factor: 0.1
+    max_acceleration_scaling_factor: 0.1

@@ -36,6 +36,7 @@ setup(
 	    "task_manager = my_arm_perception.task_manager:main",
 	    "mock_manipulation = my_arm_perception.mock_manipulation:main",
         "trial_runner = my_arm_perception.trial_runner:main",
+        "medshelf_manipulation = my_arm_perception.medshelf_manipulation:main",
         "analyze_trials = my_arm_perception.analyze_trials:main",
         ],
     },

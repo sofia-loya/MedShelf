@@ -1,0 +1,25 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: my_arm_bringup
+    relative_path: description/urdf/my_arm.urdf.xacro
+  srdf:
+    relative_path: config/my_arm.srdf
+  package_settings:
+    author_name: Maitreyi Dixit
+    author_email: mddixit@andrew.cmu.edu
+    generated_timestamp: 1791315879
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
+  modified_urdf:
+    xacros:
+      - control_xacro
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
