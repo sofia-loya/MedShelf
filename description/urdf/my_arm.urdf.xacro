@@ -23,16 +23,17 @@
   </xacro:ur_robot>
 
   <!-- === Adapter: UR5 tool0 -> gripper mount frame === -->
-    <xacro:ur_to_robotiq
-      prefix=""
-      connected_to="tool0"/>
+  <xacro:ur_to_robotiq
+    prefix=""
+    parent="tool0"
+    child="gripper_mount_link"/>
 
   <!-- === Robotiq 2F-85 gripper === -->
   <xacro:robotiq_gripper
     name="robotiq_gripper"
     prefix=""
     parent="gripper_mount_link"
-    sim_ignition="true"
+    sim_gazebo="true"
     include_ros2_control="true">
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </xacro:robotiq_gripper>
