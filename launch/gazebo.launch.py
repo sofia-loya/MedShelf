@@ -25,8 +25,7 @@ def generate_launch_description():
     )
     set_resource_path = AppendEnvironmentVariable('GZ_SIM_RESOURCE_PATH', resource_paths)
 
-    # Where the robot base goes. Defaults = center of the table's raised pad
-    # (top at z = 1.1) with the table yawed so the pad faces the shelf.
+    # Robot base: on the lower tabletop, just behind the raised delivery tray
     spawn_args = [
         DeclareLaunchArgument('x', default_value='0.0'),
         DeclareLaunchArgument('y', default_value='0.12'),
@@ -84,9 +83,13 @@ def generate_launch_description():
         package='controller_manager', executable='spawner',
         arguments=['gripper_controller'], output='screen')
 
-    # Order: robot spawned -> joint states up -> arm + gripper controllers
+    # Bin attach/detach bridge; also releases all bins right after spawn
+    grasp = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(pkg_share, 'launch', 'grasp.launch.py')))
+
+    # Order: robot spawned -> joint states + grasp bridge -> arm + gripper controllers
     start_broadcaster = RegisterEventHandler(
-        OnProcessExit(target_action=spawn_robot, on_exit=[joint_state_broadcaster]))
+        OnProcessExit(target_action=spawn_robot, on_exit=[joint_state_broadcaster, grasp]))
     start_controllers = RegisterEventHandler(
         OnProcessExit(target_action=joint_state_broadcaster,
                       on_exit=[arm_controller, gripper_controller]))
