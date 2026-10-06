@@ -41,4 +41,6 @@
   <!-- === ros2_control block for the UR5's 6 joints (Gazebo) === -->
   <xacro:ur5_ros2_control name="MyUR5System"/>
 
+  <xacro:include filename="$(find my_arm_bringup)/description/urdf/grasp_attach.xacro"/>
+
 </robot>
