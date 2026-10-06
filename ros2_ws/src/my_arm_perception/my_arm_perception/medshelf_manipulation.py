@@ -17,9 +17,16 @@ Grasp: the tray's front wall has a 100 x 20 mm handle slot (130-150 mm above the
 with a 25 mm bar above it. Approach horizontally; fingers close vertically around that bar.
 
 Coordinates: Gazebo world -> robot frame by subtracting the spawn position (base_x/y/z).
+
+Holding the tray uses the DetachableJoint "magnet" from grasp_attach.xacro / grasp.launch.py:
+after the fingers close, the node reads the real tray poses from Gazebo, finds the tray whose
+handle is actually between the fingers, and only attaches it if the handle is within
+attach_tolerance of the gripper. That distance is reported as grasp_err (a precision metric).
 """
 import math
 import queue
+import re
+import subprocess
 import struct
 import threading
 import time
@@ -36,7 +43,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from shape_msgs.msg import Mesh, MeshTriangle, SolidPrimitive
-from std_msgs.msg import String
+from std_msgs.msg import Empty, String
 
 ARM_GROUP = "ur_manipulator"
 TOOL_LINK = "tool0"
@@ -119,6 +126,8 @@ class MedShelfManipulation(Node):
         p("place_xyz", [0.30, -0.20, 1.05])   # tray CENTER x,y and table-top z for the drop, Gazebo coords
         p("table_top_z", 1.04)       # top of the table collision box (just under the arm base)
         p("missed_grasp_threshold", 0.75)   # knuckle angle; closed on nothing ~0.79, on the 25 mm bar ~0.56
+        p("attach_tolerance", 0.03)         # max gripper-to-handle distance (m) for the magnet to grab
+        p("world_name", "medshelf")
         p("pregrasp_gripper", 0.40)         # partly open (~40 mm) so the lower finger fits the 20 mm handle slot
 
         g = lambda n: self.get_parameter(n).value  # noqa: E731
@@ -134,6 +143,14 @@ class MedShelfManipulation(Node):
 
         self.gripper_pos = None
         self.jobs = queue.Queue()
+        self.held_bin = None
+        self.attach_pubs, self.detach_pubs, self.attach_state = {}, {}, {}
+        for b in ("gauze", "gloves", "syringes", "masks", "tape", "wipes",
+                  "dressings", "saline", "specimen_cups"):
+            self.attach_pubs[b] = self.create_publisher(Empty, f"/medshelf/attach/tray_{b}", 10)
+            self.detach_pubs[b] = self.create_publisher(Empty, f"/medshelf/detach/tray_{b}", 10)
+            self.create_subscription(String, f"/medshelf/attach_state/tray_{b}",
+                                     lambda m, b=b: self.attach_state.__setitem__(b, m.data), 10)
 
         self.get_logger().info("Starting MoveItPy...")
         self.moveit = MoveItPy(node_name="moveit_py")
@@ -241,6 +258,53 @@ class MedShelfManipulation(Node):
         self.aco_pub.publish(aco)
         time.sleep(0.3)
 
+    # ---------------- Gazebo ground truth + magnet ----------------
+    def gz_tray_poses(self):
+        """{bin: (x, y, z)} of every tray model, read once from Gazebo."""
+        world = self.get_parameter("world_name").value
+        out = subprocess.run(["gz", "topic", "-e", "-n", "1", "-t", f"/world/{world}/pose/info"],
+                             capture_output=True, text=True, timeout=10).stdout
+        poses = {}
+        for chunk in re.split(r"\npose \{", out):
+            m = re.search(r'name: "tray_([a-z_]+)"', chunk)
+            pos = re.search(r"position \{([^}]*)\}", chunk)
+            if not m or m.group(1) in poses:
+                continue
+            xyz = [0.0, 0.0, 0.0]
+            if pos:
+                for i, axis in enumerate("xyz"):
+                    v = re.search(rf"\b{axis}: ([-\d.e+]+)", pos.group(1))
+                    if v:
+                        xyz[i] = float(v.group(1))
+            poses[m.group(1)] = tuple(xyz)
+        return poses
+
+    def magnet_attach(self, handle_gz):
+        """Attach whichever tray's handle is actually at the gripper. Returns (bin, error_m)."""
+        poses = self.gz_tray_poses()
+        if not poses:
+            raise RuntimeError("could not read tray poses from Gazebo")
+        # trays are yawed 180 deg, so the handle is +y / +z from the tray model origin (bottom center)
+        handles = {b: (p[0], p[1] + HANDLE_FWD, p[2] + 0.0875 + HANDLE_UP) for b, p in poses.items()}
+        b = min(handles, key=lambda k: math.dist(handles[k], handle_gz))
+        err = math.dist(handles[b], handle_gz)
+        if err > self.get_parameter("attach_tolerance").value:
+            raise RuntimeError(f"no handle between fingers (nearest {b}, {100 * err:.1f} cm off)")
+        self.attach_state.pop(b, None)
+        self.attach_pubs[b].publish(Empty())
+        t0 = time.monotonic()
+        while self.attach_state.get(b) != "attached" and time.monotonic() - t0 < 2.0:
+            time.sleep(0.05)
+        self.held_bin = b
+        return b, err
+
+    def magnet_release(self):
+        if self.held_bin:
+            for _ in range(3):
+                self.detach_pubs[self.held_bin].publish(Empty())
+                time.sleep(0.05)
+            self.held_bin = None
+
     def gripper_links(self):
         links = []
         try:
@@ -330,15 +394,18 @@ class MedShelfManipulation(Node):
             self.set_gripper(GRIPPER_OPEN, "open after miss")
             self.move(self.tool_pose(pre), straight=True, label="back off after miss")
             raise RuntimeError(f"missed grasp (gripper closed to {self.gripper_pos:.3f})")
+        bin_name, grasp_err = self.magnet_attach(handle)
         self.attach_tray(slot)
         self.move(self.tool_pose(lifted), straight=True, label="lift")
         self.move(self.tool_pose(out), straight=True, label="retreat")
         self.move(self.tool_pose(above_place), label="to drop spot")
         self.move(self.tool_pose(place), straight=True, label="lower")
+        self.magnet_release()
         self.set_gripper(GRIPPER_OPEN, "release")
         self.detach_tray()
         self.move(self.tool_pose(above_place), straight=True, label="clear")
         self.move("home", label="home")
+        return bin_name, grasp_err
 
     # ---------------- plumbing ----------------
     def on_target(self, msg):
@@ -354,14 +421,15 @@ class MedShelfManipulation(Node):
             self.publish_status("EXECUTING")
             t0 = time.monotonic()
             try:
-                self.pick(target)
-                self.detail(f"ok in {time.monotonic() - t0:.1f}s")
+                bin_name, err = self.pick(target)
+                self.detail(f"ok in {time.monotonic() - t0:.1f}s | bin={bin_name} | grasp_err_cm={100 * err:.2f}")
                 self.publish_status("SUCCEEDED")
             except Exception as e:  # noqa: BLE001
                 self.get_logger().error(str(e))
                 self.detail(str(e))
                 self.publish_status("FAILED")
                 try:
+                    self.magnet_release()
                     self.set_gripper(GRIPPER_OPEN, "recover open")
                     self.detach_tray()
                     self.move("home", label="recover home")
