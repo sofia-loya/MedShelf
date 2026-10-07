@@ -126,14 +126,14 @@ class MedShelfManipulation(Node):
         super().__init__("medshelf_manipulation")
         p = self.declare_parameter
         p("base_x", 0.0); p("base_y", 0.12); p("base_z", 1.05)   # Gazebo spawn position of the arm
-        p("tcp_offset", 0.155)       # tool0 -> center of the finger pads (m). Tune in RViz.
+        p("tcp_offset", 0.185)       # tool0 -> center of the finger pads (m). Tune in RViz.
         p("grasp_roll_deg", 0.0)     # rotate gripper about its approach axis if fingers close sideways
         p("pregrasp_dist", 0.12)     # stop this far in front of the handle before going in
         p("retreat_dist", 0.32)      # pull straight out this far (tray is 0.25 deep)
-        p("place_xyz", [0.30, -0.20, 1.05])   # tray CENTER x,y and table-top z for the drop, Gazebo coords
+        p("place_xyz", [0.0, -0.25, 1.10])   # tray CENTER x,y and table-top z for the drop, Gazebo coords
         p("table_top_z", 1.04)       # top of the table collision box (just under the arm base)
         p("missed_grasp_threshold", 0.75)   # knuckle angle; closed on nothing ~0.79, on the 25 mm bar ~0.56
-        p("attach_tolerance", 0.03)         # max gripper-to-handle distance (m) for the magnet to grab
+        p("attach_tolerance", 0.08)         # max gripper-to-handle distance (m) for the magnet to grab
         p("world_name", "medshelf")
         p("pregrasp_gripper", 0.40)         # partly open (~40 mm) so the lower finger fits the 20 mm handle slot
         p("grasp_z_offset", 0.0)            # shift the grasp up(+)/down(-) if the fingers sit too high/low

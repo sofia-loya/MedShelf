@@ -69,7 +69,7 @@ class TrialRunner(Node):
         self.declare_parameter("run_manipulation", False)
         self.declare_parameter("manip_timeout_s", 120.0)
         self.declare_parameter("use_perception", True)
-        self.declare_parameter("place_xyz", [0.30, -0.20, 1.05])  # must match medshelf_manipulation
+        self.declare_parameter("place_xyz", [0.0, -0.25, 1.10])  # must match medshelf_manipulation
         self.declare_parameter("delivery_radius", 0.12)
 
         self.lock = threading.Lock()
