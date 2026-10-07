@@ -30,14 +30,16 @@ import subprocess
 import struct
 import threading
 import time
+import random
 from pathlib import Path
 
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory, ParallelGripperCommand
-from geometry_msgs.msg import Point, Pose, PoseStamped
 from moveit.planning import MoveItPy, PlanRequestParameters
+from moveit.core.robot_state import RobotState
+from geometry_msgs.msg import Point, Pose, PoseStamped
 from moveit_msgs.msg import AttachedCollisionObject, CollisionObject
 from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
@@ -130,7 +132,7 @@ class MedShelfManipulation(Node):
         p("grasp_roll_deg", 0.0)     # rotate gripper about its approach axis if fingers close sideways
         p("pregrasp_dist", 0.12)     # stop this far in front of the handle before going in
         p("retreat_dist", 0.32)      # pull straight out this far (tray is 0.25 deep)
-        p("place_xyz", [0.15, -0.35, 1.10])   # tray CENTER x,y and table-top z for the drop, Gazebo coords
+        p("place_xyz", [0.15, -0.35, 1.12])   # tray CENTER x,y and table-top z for the drop, Gazebo coords
         p("table_top_z", 1.04)       # top of the table collision box (just under the arm base)
         p("missed_grasp_threshold", 0.75)   # knuckle angle; closed on nothing ~0.79, on the 25 mm bar ~0.56
         p("attach_tolerance", 0.08)         # max gripper-to-handle distance (m) for the magnet to grab
@@ -139,6 +141,7 @@ class MedShelfManipulation(Node):
         p("grasp_z_offset", 0.0)            # shift the grasp up(+)/down(-) if the fingers sit too high/low
         p("require_finger_contact", False)  # True = also fail if the fingers close all the way (no pinch)
         p("gripper_timeout", 25.0)          # s; Gazebo can run slower than real time
+        p("lift_height", 0.03)              # raise the tray this much before pulling it out (was 0.01)
 
         g = lambda n: self.get_parameter(n).value  # noqa: E731
         self.base = (g("base_x"), g("base_y"), g("base_z"))
@@ -230,7 +233,50 @@ class MedShelfManipulation(Node):
         table.primitive_poses.append(pose)
         table.operation = CollisionObject.ADD
         objs.append(table)
+
+        # Raised board on the table top. It's part of table.stl, so the flat box above misses it.
+        board = self.board_box(share / "table.stl")
+        if board is not None:
+            objs.append(board)
         return objs
+
+    def board_box(self, stl_path):
+        """Bounding box of everything in table.stl that sits above the table surface (the raised board)."""
+        data = Path(stl_path).read_bytes()
+        n = struct.unpack("<I", data[80:84])[0]
+        rot = rpy_matrix(-math.pi / 2, 0, math.pi)   # table model yaw pi, visual roll -pi/2
+        trans = (0.5, 0.5, 1.1)                      # Rz(pi) applied to visual xyz (-0.5, -0.5, 1.1)
+        surface = self.base[2]                       # arm stands on the table surface (1.05)
+        pts = []
+        for i in range(n):
+            for j in range(3):
+                o = 84 + i * 50 + 12 + j * 12
+                v = struct.unpack("<3f", data[o:o + 12])
+                w = apply(rot, [c * 0.001 for c in v])
+                w = [w[k] + trans[k] for k in range(3)]
+                if w[2] > surface + 0.015:
+                    pts.append(w)
+        if not pts:
+            self.get_logger().warn("board_box: nothing above the table surface in table.stl")
+            return None
+        pad = 0.01
+        x0, x1 = min(p[0] for p in pts) - pad, max(p[0] for p in pts) + pad
+        y0, y1 = min(p[1] for p in pts) - pad, max(p[1] for p in pts) + pad
+        z0, z1 = surface, max(p[2] for p in pts) + pad
+        self.get_logger().info(f"board box (Gazebo coords): x[{x0:.3f},{x1:.3f}] "
+                               f"y[{y0:.3f},{y1:.3f}] z[{z0:.3f},{z1:.3f}]")
+        co = CollisionObject()
+        co.header.frame_id = "world"
+        co.id = "board"
+        co.operation = CollisionObject.ADD
+        co.primitives.append(SolidPrimitive(type=SolidPrimitive.BOX,
+                                            dimensions=[x1 - x0, y1 - y0, z1 - z0]))
+        cx, cy, cz = self.to_robot([(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2])
+        pose = Pose()
+        pose.position.x, pose.position.y, pose.position.z = cx, cy, cz
+        pose.orientation.w = 1.0
+        co.primitive_poses.append(pose)
+        return co
 
     def tray_object(self, slot, op=CollisionObject.ADD):
         co = CollisionObject()
@@ -388,21 +434,88 @@ class MedShelfManipulation(Node):
         aco.object.operation = CollisionObject.REMOVE
         self.aco_pub.publish(aco)
         time.sleep(0.3)
+        # MoveIt drops a detached object back into the world where it was (around the fingers).
+        # Delete that copy too, or every later plan starts "in collision" with it.
+        rm = CollisionObject()
+        rm.id = "held_tray"
+        rm.header.frame_id = "world"
+        rm.operation = CollisionObject.REMOVE
+        self.co_pub.publish(rm)
+        time.sleep(0.3)
 
     # ---------------- motion ----------------
-    def move(self, goal, straight=False, label=""):
+    def state_from(self, q):
+        st = RobotState(self.moveit.get_robot_model())
+        st.set_to_default_values()
+        st.set_joint_group_positions(ARM_GROUP, q)
+        st.update()
+        return st
+
+    @staticmethod
+    def wrap_near(v, ref):
+        """Same joint angle +/- 2*pi, whichever is closest to ref (stays within UR's +/- 2*pi limits)."""
+        best = v
+        for k in (-1, 0, 1):
+            c = v + 2 * math.pi * k
+            if abs(c) <= 2 * math.pi and abs(c - ref) < abs(best - ref):
+                best = c
+        return best
+
+    def ik_candidates(self, pose_stamped, tries=40, keep=6):
+        """Collision-free IK solutions for tool0 at pose_stamped, closest to the current arm first."""
+        q_now = self.current_arm_joints() or HOME
+        seeds = [q_now, HOME] + [[random.uniform(-math.pi, math.pi) for _ in ARM_JOINTS]
+                                 for _ in range(tries)]
+        found = []
+        with self.moveit.get_planning_scene_monitor().read_only() as scene:
+            for seed in seeds:
+                st = self.state_from(seed)
+                if not st.set_from_ik(ARM_GROUP, pose_stamped.pose, TOOL_LINK, 0.05):
+                    continue
+                st.update()
+                if scene.is_state_colliding(st, ARM_GROUP, False):
+                    continue
+                q = [float(v) for v in st.get_joint_group_positions(ARM_GROUP)]
+                q = [self.wrap_near(v, r) if i != 2 else v   # skip elbow (limited to +/- pi)
+                     for i, (v, r) in enumerate(zip(q, q_now))]
+                if any(max(abs(a - b) for a, b in zip(q, f)) < 0.05 for f in found):
+                    continue  # duplicate of one we already have
+                found.append(q)
+        found.sort(key=lambda q: sum((a - b) ** 2 for a, b in zip(q, q_now)))
+        self.get_logger().info(f"IK: {len(found)} collision-free candidates")
+        return found[:keep]
+
+    def plan_once(self, set_goal, params):
         self.arm.set_start_state_to_current_state()
+        set_goal()
+        return self.arm.plan(single_plan_parameters=params)
+
+    def move(self, goal, straight=False, label=""):
         if isinstance(goal, str):
-            self.arm.set_goal_state(configuration_name=goal)
+            setters = [lambda: self.arm.set_goal_state(configuration_name=goal)]
+        elif straight:
+            setters = [lambda: self.arm.set_goal_state(pose_stamped_msg=goal, pose_link=TOOL_LINK)]
         else:
-            self.arm.set_goal_state(pose_stamped_msg=goal, pose_link=TOOL_LINK)
-        params = self.lin_params if straight else self.ptp_params
-        result = self.arm.plan(single_plan_parameters=params)
-        if not result:  # LIN/PTP failed (e.g. collision on the direct path): fall back to OMPL
+            cands = self.ik_candidates(goal)
+            if not cands:
+                raise RuntimeError(f"no collision-free IK: {label}")
+            setters = [lambda q=q: self.arm.set_goal_state(robot_state=self.state_from(q)) for q in cands]
+
+        primary = self.lin_params if straight else self.ptp_params
+        result = None
+        for s in setters:                       # try each IK solution with PTP/LIN first (fast)
+            result = self.plan_once(s, primary)
+            if result:
+                break
+        if not result:                          # then OMPL on the two best (slow, 5 s each)
             self.get_logger().warn(f"{label}: {'LIN' if straight else 'PTP'} plan failed, trying OMPL")
-            result = self.arm.plan(single_plan_parameters=self.free_params)
+            for s in setters[:2]:
+                result = self.plan_once(s, self.free_params)
+                if result:
+                    break
         if not result:
             raise RuntimeError(f"planning failed: {label}")
+
         # Where the trajectory ends, so we can confirm the real (Gazebo) arm actually got there
         jt = result.trajectory.get_robot_trajectory_msg().joint_trajectory
         goal_q = dict(zip(jt.joint_names, jt.points[-1].positions))
@@ -420,15 +533,19 @@ class MedShelfManipulation(Node):
         """Block until /joint_states matches the trajectory's last point (execute() may return early)."""
         t0 = time.monotonic()
         limit = 3.0 * duration + 15.0   # Gazebo on WSL can run well below real time
-        err = float("inf")
+        errs, err = {}, float("inf")
         while time.monotonic() - t0 < limit:
-            err = max((abs(self.arm_pos.get(j, 1e9) - q) for j, q in goal_q.items()
-                       if j in ARM_JOINTS), default=0.0)
+            errs = {j: self.arm_pos.get(j, 1e9) - q for j, q in goal_q.items() if j in ARM_JOINTS}
+            err = max((abs(v) for v in errs.values()), default=0.0)
             if err < tol:
                 time.sleep(0.2)  # let it settle
                 return
             time.sleep(0.05)
-        raise RuntimeError(f"arm did not reach goal: {label} (still {err:.3f} rad off)")
+        worst = max(errs, key=lambda j: abs(errs[j])) if errs else "?"
+        target = [round(goal_q[j], 2) for j in ARM_JOINTS if j in goal_q]
+        actual = [round(self.arm_pos.get(j, float("nan")), 2) for j in ARM_JOINTS]
+        raise RuntimeError(f"arm did not reach goal: {label} (still {err:.3f} rad off; "
+                           f"worst {worst} {errs.get(worst, 0.0):+.3f}) goal={target} actual={actual}")
 
     def set_gripper(self, position, label):
         if not self.gripper.wait_for_server(timeout_sec=5.0):
@@ -458,8 +575,9 @@ class MedShelfManipulation(Node):
         slot = min(SLOT_CENTERS, key=lambda s: sum((a - b) ** 2 for a, b in zip(SLOT_CENTERS[s], gz)))
         handle = (gz[0], gz[1] + HANDLE_FWD, gz[2] + HANDLE_UP + self.get_parameter("grasp_z_offset").value)
         pre = (handle[0], handle[1] + self.get_parameter("pregrasp_dist").value, handle[2])
-        lifted = (handle[0], handle[1], handle[2] + 0.01)
-        out = (handle[0], handle[1] + self.get_parameter("retreat_dist").value, handle[2] + 0.01)
+        lift = self.get_parameter("lift_height").value
+        lifted = (handle[0], handle[1], handle[2] + lift)
+        out = (handle[0], handle[1] + self.get_parameter("retreat_dist").value, handle[2] + lift)
         px, py, ptop = self.get_parameter("place_xyz").value
         place = (px, py + HANDLE_FWD, ptop + 0.0875 + HANDLE_UP + 0.01)
         above_place = (place[0], place[1], place[2] + 0.08)
