@@ -285,7 +285,26 @@ class BinDetector(Node):
         target_msg = PoseStamped()
         target_msg.header.stamp = header.stamp
         target_msg.header.frame_id = self.get_parameter("world_frame").value
+
+        row, column = slot_name.split("_")
+
+        slot_x = {
+            "left": 0.25,
+            "center": 0.0,
+            "right": -0.25,
+        }
+
+        slot_z = {
+            "top": 1.6665,
+            "middle": 1.3915,
+            "bottom": 1.1165,
+        }
+
+        target_msg.pose.position.x = slot_x[column]
+        target_msg.pose.position.y = -0.75
+        target_msg.pose.position.z = slot_z[row]
         target_msg.pose.orientation.w = 1.0
+
         self.target_pub.publish(target_msg)
 
     def publish_not_visible(self, header):
