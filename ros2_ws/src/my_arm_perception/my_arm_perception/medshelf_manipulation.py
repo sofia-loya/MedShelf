@@ -402,6 +402,10 @@ class MedShelfManipulation(Node):
             result = self.arm.plan(single_plan_parameters=self.free_params)
         if not result:
             raise RuntimeError(f"planning failed: {label}")
+        # Where the trajectory ends, so we can confirm the real (Gazebo) arm actually got there
+        jt = result.trajectory.get_robot_trajectory_msg().joint_trajectory
+        goal_q = dict(zip(jt.joint_names, jt.points[-1].positions))
+        dur = jt.points[-1].time_from_start.sec + jt.points[-1].time_from_start.nanosec * 1e-9
         try:
             status = self.moveit.execute(result.trajectory, controllers=[])
         except TypeError:  # older MoveItPy signature
@@ -409,6 +413,21 @@ class MedShelfManipulation(Node):
         ok = "SUCCEEDED" if status is None else getattr(status, "status", status)
         if str(ok).upper() not in ("SUCCEEDED", "TRUE"):
             raise RuntimeError(f"execution failed ({ok}): {label}")
+        self.wait_until_reached(goal_q, dur, label)
+
+    def wait_until_reached(self, goal_q, duration, label, tol=0.02):
+        """Block until /joint_states matches the trajectory's last point (execute() may return early)."""
+        t0 = time.monotonic()
+        limit = 3.0 * duration + 15.0   # Gazebo on WSL can run well below real time
+        err = float("inf")
+        while time.monotonic() - t0 < limit:
+            err = max((abs(self.arm_pos.get(j, 1e9) - q) for j, q in goal_q.items()
+                       if j in ARM_JOINTS), default=0.0)
+            if err < tol:
+                time.sleep(0.2)  # let it settle
+                return
+            time.sleep(0.05)
+        raise RuntimeError(f"arm did not reach goal: {label} (still {err:.3f} rad off)")
 
     def set_gripper(self, position, label):
         if not self.gripper.wait_for_server(timeout_sec=5.0):
