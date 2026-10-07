@@ -130,7 +130,7 @@ class MedShelfManipulation(Node):
         p("grasp_roll_deg", 0.0)     # rotate gripper about its approach axis if fingers close sideways
         p("pregrasp_dist", 0.12)     # stop this far in front of the handle before going in
         p("retreat_dist", 0.32)      # pull straight out this far (tray is 0.25 deep)
-        p("place_xyz", [0.0, -0.25, 1.10])   # tray CENTER x,y and table-top z for the drop, Gazebo coords
+        p("place_xyz", [0.15, -0.35, 1.10])   # tray CENTER x,y and table-top z for the drop, Gazebo coords
         p("table_top_z", 1.04)       # top of the table collision box (just under the arm base)
         p("missed_grasp_threshold", 0.75)   # knuckle angle; closed on nothing ~0.79, on the 25 mm bar ~0.56
         p("attach_tolerance", 0.08)         # max gripper-to-handle distance (m) for the magnet to grab
@@ -173,6 +173,7 @@ class MedShelfManipulation(Node):
         self.arm = self.moveit.get_planning_component(ARM_GROUP)
         self.free_params = PlanRequestParameters(self.moveit, "ompl_rrtc")
         self.lin_params = PlanRequestParameters(self.moveit, "pilz_lin")
+        self.ptp_params = PlanRequestParameters(self.moveit, "pilz_ptp")
         self.static_scene = self.build_static_scene()
 
         threading.Thread(target=self.worker, daemon=True).start()
@@ -395,10 +396,10 @@ class MedShelfManipulation(Node):
             self.arm.set_goal_state(configuration_name=goal)
         else:
             self.arm.set_goal_state(pose_stamped_msg=goal, pose_link=TOOL_LINK)
-        params = self.lin_params if straight else self.free_params
+        params = self.lin_params if straight else self.ptp_params
         result = self.arm.plan(single_plan_parameters=params)
-        if not result and straight:  # fall back to free-space planning if LIN fails
-            self.get_logger().warn(f"{label}: straight-line plan failed, trying OMPL")
+        if not result:  # LIN/PTP failed (e.g. collision on the direct path): fall back to OMPL
+            self.get_logger().warn(f"{label}: {'LIN' if straight else 'PTP'} plan failed, trying OMPL")
             result = self.arm.plan(single_plan_parameters=self.free_params)
         if not result:
             raise RuntimeError(f"planning failed: {label}")
