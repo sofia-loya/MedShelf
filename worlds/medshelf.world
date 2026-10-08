@@ -29,71 +29,56 @@
       </link>
     </model>
 
-    <!-- Table: 2 x 2 m, top at z = 1.1, centered on origin -->
+        <!-- Table: 1.0 x 1.0 m, centered on origin. Visual is centered in the model frame,
+         so the model yaw spins it in place. Change yaw to move the raised part:
+         1.5708 / -1.5708 / 3.1416 / 0 -->
     <model name="table">
       <static>true</static>
+         <pose>0 0 0 0 0 3.1416</pose>
       <link name="link">
         <visual name="visual">
-          <pose>-1.0 -1.0 1.1 -1.5708 0 0</pose>
-          <geometry>
-            <mesh>
-              <uri>package://my_arm_bringup/meshes/table.stl</uri>
-              <scale>0.001 0.001 0.001</scale>
-            </mesh>
-          </geometry>
+          <pose>-0.5 -0.5 1.1 -1.5708 0 0</pose>
+          <geometry><mesh><uri>package://my_arm_bringup/meshes/table.stl</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
           <material><ambient>0.55 0.4 0.3 1</ambient><diffuse>0.55 0.4 0.3 1</diffuse></material>
         </visual>
         <collision name="collision">
-          <pose>0 0 0.55 0 0 0</pose>
-          <geometry><box><size>2.0 2.0 1.1</size></box></geometry>
+          <pose>-0.5 -0.5 1.1 -1.5708 0 0</pose>
+          <geometry><mesh><uri>package://my_arm_bringup/meshes/table.stl</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
         </collision>
       </link>
     </model>
 
-    <!-- Shelf: on the floor past the table's -y edge, open front facing the robot -->
+    <!-- Shelf: 0.85 W x 0.425 D x 1.85 H, centered on x = 0, open front facing the table.
+         Front face at y = -0.60 (10 cm gap from the table edge at y = -0.50). -->
     <model name="shelf">
       <static>true</static>
-      <pose>-0.425 -1.05 0 1.5708 0 0</pose>
+      <pose>0 -0.8125 0 0 0 0</pose>
       <link name="link">
         <visual name="visual">
-          <geometry>
-            <mesh>
-              <uri>package://my_arm_bringup/meshes/shelf.stl</uri>
-              <scale>0.001 0.001 0.001</scale>
-            </mesh>
-          </geometry>
+          <pose>-0.425 0.2125 0 1.5708 0 0</pose>
+          <geometry><mesh><uri>package://my_arm_bringup/meshes/shelf.stl</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
           <material><ambient>0.9 0.9 0.9 1</ambient><diffuse>0.9 0.9 0.9 1</diffuse></material>
         </visual>
         <collision name="collision">
-          <geometry>
-            <mesh>
-              <uri>package://my_arm_bringup/meshes/shelf.stl</uri>
-              <scale>0.001 0.001 0.001</scale>
-            </mesh>
-          </geometry>
+          <pose>-0.425 0.2125 0 1.5708 0 0</pose>
+          <geometry><mesh><uri>package://my_arm_bringup/meshes/shelf.stl</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
         </collision>
       </link>
     </model>
 
-    <!-- Bin on the shelf: dynamic, so the gripper can move it -->
-    <model name="bin_red">
-      <pose>0 -1.19 1.035 0 0 0</pose>
+    <!-- Trays: 3 per shelf level, 0.25 m apart, 2.5 cm behind the shelf front.
+         Shelf surfaces at z = 1.025 / 1.300 / 1.575; trays start 2 mm above and settle. -->
+    <model name="tray_gauze">  <!-- top level -->
+      <pose>0.25 -0.75 1.577 0 0 3.14159</pose>
       <link name="link">
         <inertial>
+          <pose>0 0 0.0875 0 0 0</pose>
           <mass>0.5</mass>
-          <inertia>
-            <ixx>0.00388</ixx><iyy>0.00255</iyy><izz>0.00388</izz>
-            <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
-          </inertia>
+          <inertia><ixx>0.00388</ixx><iyy>0.00255</iyy><izz>0.00388</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
         </inertial>
         <visual name="visual">
           <pose>-0.0875 0.125 0 1.5708 0 0</pose>
-          <geometry>
-            <mesh>
-              <uri>package://my_arm_bringup/meshes/tray.stl</uri>
-              <scale>0.001 0.001 0.001</scale>
-            </mesh>
-          </geometry>
+          <geometry><mesh><uri>package://my_arm_bringup/meshes/tray.stl</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
           <material><ambient>0.8 0.1 0.1 1</ambient><diffuse>0.8 0.1 0.1 1</diffuse></material>
         </visual>
         <collision name="collision">
@@ -102,6 +87,193 @@
         </collision>
       </link>
     </model>
+
+    <model name="tray_gloves">  <!-- top level -->
+      <pose>0.0 -0.75 1.577 0 0 3.14159</pose>
+      <link name="link">
+        <inertial>
+          <pose>0 0 0.0875 0 0 0</pose>
+          <mass>0.5</mass>
+          <inertia><ixx>0.00388</ixx><iyy>0.00255</iyy><izz>0.00388</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+        </inertial>
+        <visual name="visual">
+          <pose>-0.0875 0.125 0 1.5708 0 0</pose>
+          <geometry><mesh><uri>package://my_arm_bringup/meshes/tray.stl</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
+          <material><ambient>0.1 0.6 0.1 1</ambient><diffuse>0.1 0.6 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <pose>0 0 0.0875 0 0 0</pose>
+          <geometry><box><size>0.175 0.25 0.175</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+
+    <model name="tray_syringes">  <!-- top level -->
+      <pose>-0.25 -0.75 1.577 0 0 3.14159</pose>
+      <link name="link">
+        <inertial>
+          <pose>0 0 0.0875 0 0 0</pose>
+          <mass>0.5</mass>
+          <inertia><ixx>0.00388</ixx><iyy>0.00255</iyy><izz>0.00388</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+        </inertial>
+        <visual name="visual">
+          <pose>-0.0875 0.125 0 1.5708 0 0</pose>
+          <geometry><mesh><uri>package://my_arm_bringup/meshes/tray.stl</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
+          <material><ambient>0.1 0.2 0.8 1</ambient><diffuse>0.1 0.2 0.8 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <pose>0 0 0.0875 0 0 0</pose>
+          <geometry><box><size>0.175 0.25 0.175</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+
+    <model name="tray_masks">  <!-- middle level -->
+      <pose>0.25 -0.75 1.302 0 0 3.14159</pose>
+      <link name="link">
+        <inertial>
+          <pose>0 0 0.0875 0 0 0</pose>
+          <mass>0.5</mass>
+          <inertia><ixx>0.00388</ixx><iyy>0.00255</iyy><izz>0.00388</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+        </inertial>
+        <visual name="visual">
+          <pose>-0.0875 0.125 0 1.5708 0 0</pose>
+          <geometry><mesh><uri>package://my_arm_bringup/meshes/tray.stl</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
+          <material><ambient>0.95 0.85 0.1 1</ambient><diffuse>0.95 0.85 0.1 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <pose>0 0 0.0875 0 0 0</pose>
+          <geometry><box><size>0.175 0.25 0.175</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+
+    <model name="tray_tape">  <!-- middle level -->
+      <pose>0.0 -0.75 1.302 0 0 3.14159</pose>
+      <link name="link">
+        <inertial>
+          <pose>0 0 0.0875 0 0 0</pose>
+          <mass>0.5</mass>
+          <inertia><ixx>0.00388</ixx><iyy>0.00255</iyy><izz>0.00388</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+        </inertial>
+        <visual name="visual">
+          <pose>-0.0875 0.125 0 1.5708 0 0</pose>
+          <geometry><mesh><uri>package://my_arm_bringup/meshes/tray.stl</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
+          <material><ambient>1.0 0.5 0.0 1</ambient><diffuse>1.0 0.5 0.0 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <pose>0 0 0.0875 0 0 0</pose>
+          <geometry><box><size>0.175 0.25 0.175</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+
+    <model name="tray_wipes">  <!-- middle level -->
+      <pose>-0.25 -0.75 1.302 0 0 3.14159</pose>
+      <link name="link">
+        <inertial>
+          <pose>0 0 0.0875 0 0 0</pose>
+          <mass>0.5</mass>
+          <inertia><ixx>0.00388</ixx><iyy>0.00255</iyy><izz>0.00388</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+        </inertial>
+        <visual name="visual">
+          <pose>-0.0875 0.125 0 1.5708 0 0</pose>
+          <geometry><mesh><uri>package://my_arm_bringup/meshes/tray.stl</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
+          <material><ambient>0.5 0.1 0.6 1</ambient><diffuse>0.5 0.1 0.6 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <pose>0 0 0.0875 0 0 0</pose>
+          <geometry><box><size>0.175 0.25 0.175</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+
+    <model name="tray_dressings">  <!-- bottom level -->
+      <pose>0.25 -0.75 1.027 0 0 3.14159</pose>
+      <link name="link">
+        <inertial>
+          <pose>0 0 0.0875 0 0 0</pose>
+          <mass>0.5</mass>
+          <inertia><ixx>0.00388</ixx><iyy>0.00255</iyy><izz>0.00388</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+        </inertial>
+        <visual name="visual">
+          <pose>-0.0875 0.125 0 1.5708 0 0</pose>
+          <geometry><mesh><uri>package://my_arm_bringup/meshes/tray.stl</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
+          <material><ambient>1.0 0.4 0.7 1</ambient><diffuse>1.0 0.4 0.7 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <pose>0 0 0.0875 0 0 0</pose>
+          <geometry><box><size>0.175 0.25 0.175</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+
+    <model name="tray_saline">  <!-- bottom level -->
+      <pose>0.0 -0.75 1.027 0 0 3.14159</pose>
+      <link name="link">
+        <inertial>
+          <pose>0 0 0.0875 0 0 0</pose>
+          <mass>0.5</mass>
+          <inertia><ixx>0.00388</ixx><iyy>0.00255</iyy><izz>0.00388</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+        </inertial>
+        <visual name="visual">
+          <pose>-0.0875 0.125 0 1.5708 0 0</pose>
+          <geometry><mesh><uri>package://my_arm_bringup/meshes/tray.stl</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
+          <material><ambient>0.0 0.8 0.8 1</ambient><diffuse>0.0 0.8 0.8 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <pose>0 0 0.0875 0 0 0</pose>
+          <geometry><box><size>0.175 0.25 0.175</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+
+    <model name="tray_specimen_cups">  <!-- bottom level -->
+      <pose>-0.25 -0.75 1.027 0 0 3.14159</pose>
+      <link name="link">
+        <inertial>
+          <pose>0 0 0.0875 0 0 0</pose>
+          <mass>0.5</mass>
+          <inertia><ixx>0.00388</ixx><iyy>0.00255</iyy><izz>0.00388</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+        </inertial>
+        <visual name="visual">
+          <pose>-0.0875 0.125 0 1.5708 0 0</pose>
+          <geometry><mesh><uri>package://my_arm_bringup/meshes/tray.stl</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
+          <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.05 0.05 0.05 1</diffuse></material>
+        </visual>
+        <collision name="collision">
+          <pose>0 0 0.0875 0 0 0</pose>
+          <geometry><box><size>0.175 0.25 0.175</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+
+    <!-- Fixed shelf camera: level and square to the shelf front, between the
+         robot and the shelf. No visual or collision, so the arm can pass through.
+         Detection runs before the arm moves. -->
+    <model name="shelf_camera">
+      <static>true</static>
+      <pose>0 -0.05 1.39 0 0 -1.5708</pose>
+      <link name="link">
+        <sensor name="shelf_camera" type="camera">
+          <always_on>true</always_on>
+          <update_rate>15</update_rate>
+          <visualize>true</visualize>
+          <topic>medshelf/camera/image_raw</topic>
+          <gz_frame_id>medshelf_camera_optical_frame</gz_frame_id>
+          <camera>
+            <horizontal_fov>1.5</horizontal_fov>
+            <image>
+              <width>640</width>
+              <height>480</height>
+              <format>R8G8B8</format>
+            </image>
+            <clip><near>0.05</near><far>10</far></clip>
+          </camera>
+        </sensor>
+      </link>
+    </model>
+
 
   </world>
 </sdf>

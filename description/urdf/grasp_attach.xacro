@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Fake grasp for Gazebo: one DetachableJoint per shelf bin.
+       Parent is wrist_3_link because the gripper's fixed joints are merged
+       into it when the URDF is converted for Gazebo.
+       NOTE: Gazebo creates each joint (attached) when the robot spawns, so
+       grasp.launch.py detaches every bin right after spawning.
+       Topics (std_msgs/Empty from ROS):
+         /medshelf/attach/tray_<bin>   grab the bin at its current offset
+         /medshelf/detach/tray_<bin>   release it
+         /medshelf/attach_state/tray_<bin>  "attached" / "detached" -->
+  <xacro:macro name="bin_attach" params="bin">
+    <gazebo>
+      <plugin filename="gz-sim-detachable-joint-system" name="gz::sim::systems::DetachableJoint">
+        <parent_link>wrist_3_link</parent_link>
+        <child_model>tray_${bin}</child_model>
+        <child_link>link</child_link>
+        <attach_topic>/medshelf/attach/tray_${bin}</attach_topic>
+        <detach_topic>/medshelf/detach/tray_${bin}</detach_topic>
+        <output_topic>/medshelf/attach_state/tray_${bin}</output_topic>
+        <suppress_child_warning>true</suppress_child_warning>
+      </plugin>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:bin_attach bin="gauze"/>
+  <xacro:bin_attach bin="gloves"/>
+  <xacro:bin_attach bin="syringes"/>
+  <xacro:bin_attach bin="masks"/>
+  <xacro:bin_attach bin="tape"/>
+  <xacro:bin_attach bin="wipes"/>
+  <xacro:bin_attach bin="dressings"/>
+  <xacro:bin_attach bin="saline"/>
+  <xacro:bin_attach bin="specimen_cups"/>
+</robot>

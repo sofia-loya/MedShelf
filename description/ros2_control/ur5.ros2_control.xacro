@@ -1,42 +1,33 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- One joint block: position command, position + velocity state, with a start angle -->
+  <xacro:macro name="ur5_joint" params="joint_name initial">
+    <joint name="${joint_name}">
+      <command_interface name="position"/>
+      <state_interface name="position">
+        <param name="initial_value">${initial}</param>
+      </state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+  </xacro:macro>
+
   <xacro:macro name="ur5_ros2_control" params="name">
     <ros2_control name="${name}" type="system">
       <hardware>
         <plugin>gz_ros2_control/GazeboSimSystem</plugin>
       </hardware>
-      <joint name="shoulder_pan_joint">
-        <command_interface name="position"/>
-        <state_interface name="position"/>
-        <state_interface name="velocity"/>
-      </joint>
-      <joint name="shoulder_lift_joint">
-        <command_interface name="position"/>
-        <state_interface name="position"/>
-        <state_interface name="velocity"/>
-      </joint>
-      <joint name="elbow_joint">
-        <command_interface name="position"/>
-        <state_interface name="position"/>
-        <state_interface name="velocity"/>
-      </joint>
-      <joint name="wrist_1_joint">
-        <command_interface name="position"/>
-        <state_interface name="position"/>
-        <state_interface name="velocity"/>
-      </joint>
-      <joint name="wrist_2_joint">
-        <command_interface name="position"/>
-        <state_interface name="position"/>
-        <state_interface name="velocity"/>
-      </joint>
-      <joint name="wrist_3_joint">
-        <command_interface name="position"/>
-        <state_interface name="position"/>
-        <state_interface name="velocity"/>
-      </joint>
+      <!-- Start in a tucked "home" pose: upper arm up, forearm level, wrist down.
+           Keeps the arm clear of the shelf when it spawns. -->
+      <xacro:ur5_joint joint_name="shoulder_pan_joint"  initial="0.0"/>
+      <xacro:ur5_joint joint_name="shoulder_lift_joint" initial="-1.5708"/>
+      <xacro:ur5_joint joint_name="elbow_joint"         initial="1.5708"/>
+      <xacro:ur5_joint joint_name="wrist_1_joint"       initial="-1.5708"/>
+      <xacro:ur5_joint joint_name="wrist_2_joint"       initial="-1.5708"/>
+      <xacro:ur5_joint joint_name="wrist_3_joint"       initial="0.0"/>
     </ros2_control>
 
+    <!-- One plugin runs every ros2_control block in the URDF (arm + gripper) -->
     <gazebo>
       <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
         <parameters>$(find my_arm_bringup)/config/my_arm_controllers.yaml</parameters>
